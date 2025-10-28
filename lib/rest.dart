@@ -6,26 +6,32 @@ import 'package:expt/affirmation_audio.dart';
 import 'package:expt/music_audio.dart';
 import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:expt/finish.dart';
 
 // タイマー画面
 class RestScreen extends StatefulWidget {
-  const RestScreen({super.key, required this.title});
+  const RestScreen({
+    super.key, 
+    required this.title,
+    required this.shuffledConditions,
+    required this.currentIndex,
+    required this.userId,
+  });
 
   final String title;
+  final List<String> shuffledConditions;
+  final int currentIndex;
+  final String userId;
 
   @override
   State<RestScreen> createState() => _RestScreenState();
 }
 
 class _RestScreenState extends State<RestScreen> {
-  // 画面遷移の回数をカウントするための静的変数
-  static int _transitionCount = 0;
-
   final int _totalTime = 10; // 合計時間（テストのため10秒）
   int _counter = 5; // 5分で初期化 => テストのため5秒で初期化
   late Timer _timer; // lateを使ってタイマー変数を宣言
   final player = AudioPlayer(); // AudioPlayerのインスタンスを作成
-
 
   @override
   void initState() { // 初期化したい時に使用するメソッド
@@ -51,25 +57,47 @@ class _RestScreenState extends State<RestScreen> {
     await player.setSource(AssetSource('audio/alarm.mp3')); // 音声ファイル名
     await player.resume(); 
 
-    // 音声の再生後に画面を遷移
-    // 現在の画面を置き換えることで、戻るボタンで前の画面に戻れなくする
-    _transitionCount++; // 遷移回数を増やす
-    Widget nextScreen;
+    player.onPlayerComplete.listen((_) {
+      player.release();
 
-    if (_transitionCount == 1) {
-      nextScreen = const BreathScreen(title: '呼吸法');
-    } else if (_transitionCount == 2) {
-      nextScreen = const AffirmationScreen(title: 'アファメーション');
-    } else {
-      nextScreen = const MusicScreen(title: '音楽リラクゼーション');
-    }
-    
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => nextScreen),
-      );
-    }
+      if (mounted) {
+        // 次に遷移する画面をリストから決定
+        int nextIndex = widget.currentIndex + 1;
+        Widget nextScreen;
+        String nextCondition;
+
+        // 次の条件があるかチェック
+        if (nextIndex < widget.shuffledConditions.length) {
+          nextCondition = widget.shuffledConditions[nextIndex];
+          if (nextCondition == 'breath') {
+            nextScreen = BreathScreen(
+              title: '呼吸法',
+              shuffledConditions: widget.shuffledConditions,
+              currentIndex: nextIndex,
+            );
+          } else if(nextCondition == 'affirmation') {
+            nextScreen = AffirmationScreen(
+              title: 'アファメーション',
+              shuffledConditions: widget.shuffledConditions,
+              currentIndex: nextIndex,
+            );
+          } else {
+            nextScreen = MusicScreen(
+              title: '音楽リラクゼーション',
+              shuffledConditions: widget.shuffledConditions,
+              currentIndex: nextIndex,
+            );
+          }
+        } else {
+          // 全ての条件が終了したら実験終了画面へ
+          nextScreen = const ResultScreen();
+        }
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => nextScreen),
+        );
+      }
+    });
   }
 
   @override

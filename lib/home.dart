@@ -1,45 +1,39 @@
 // ホーム
 
-import 'package:expt/practice.dart';
 import 'package:expt/start.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
-void main() {
-  runApp(MyApp());
-}
 
-// アプリ
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'flutter Demo',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
-      home: Home(),
-    );
-  }
-}
-
-// UIウィジェット
 class Home extends StatelessWidget {
   const Home({super.key});
 
+  // 進むボタンを押した時
+  push(BuildContext context) {
+    // 音量確認ページに進む
+    context.push('/b');
+  }
+  
   @override
   Widget build(BuildContext context) {
-    // ボタン
-    final buttton1 = ElevatedButton(
-      onPressed: () {
-        // ボタンが押されたらPracticePage()へ画面遷移
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const PracticePage()),
-        );
-      }, 
-      child: const Text('音声テスト'),
+    // 画面の上に表示するバー
+    final appBar = AppBar(
+      backgroundColor: Colors.blue,
+      title: const Text('ホーム画面'),
+    );
+
+    // 進むボタン
+    final pushButton = ElevatedButton(
+      onPressed: () => push(context),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.purple[50],
+      ),
+      child: const Text(
+        '音声テスト',
+        style: TextStyle(
+          fontSize: 15,
+        ),
+      ),
     );
 
     final button2 = ElevatedButton(
@@ -50,23 +44,41 @@ class Home extends StatelessWidget {
           MaterialPageRoute(builder: (context) => const Start()),
         );
       },
-      child: const Text('実験開始'),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.purple[50],
+      ),
+      child: const Text(
+        '実験開始',
+        style: TextStyle(
+          fontSize: 15,
+        ),
+      ),
     );
 
     // 縦に並べるカラム
     final col = Column(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        buttton1,
+        Text(
+          '実験前に行ってください。',
+          style: TextStyle(
+            fontSize: 20,
+          ),
+        ),
+        pushButton,
+        Text(
+          '実験を始める場合は、\n下のボタンを押してください。',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 20,
+          ),
+        ),
         button2,
       ],
     );
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('ホーム'),
-        backgroundColor: Colors.blue,
-      ),
+      appBar: appBar,
       body: Center(
         child: col,
       ),

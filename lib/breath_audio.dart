@@ -4,23 +4,68 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:expt/rest.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 // タイマー画面
 class BreathScreen extends StatefulWidget {
-  const BreathScreen({super.key, required this.title});
+  const BreathScreen({
+    super.key, 
+    required this.title,
+    required this.shuffledConditions,
+    required this.currentIndex,
+  });
 
   final String title;
+  final List<String> shuffledConditions;
+  final int currentIndex;
 
   @override
   State<BreathScreen> createState() => _BreathScreenState();
 }
 
 class _BreathScreenState extends State<BreathScreen> {
-  final int _totalTime = 900; // 合計時間
-  int _counter = 900; // 15分で初期化 => テストのため10秒で初期化
+  final int _totalTime = 10; // 合計時間
+  int _counter = 10; // 15分で初期化 => テストのため10秒で初期化
   late Timer _timer; // lateを使ってタイマー変数を宣言
   final backgroundPlayer = AudioPlayer(); // 実験音声用インスタンス
   final alarmPlayer = AudioPlayer(); // アラーム用インスタンス
+
+  DateTime? startTime;
+  DateTime? endTime;
+
+  Future<void> _sendTimeToServer() async {
+    const url = 'http://localhost:3000/api/experiment-log'; // サーバーのURL
+
+    final data = {
+      'user_id': 'temporary_user_id', 
+      'condition': widget.shuffledConditions[widget.currentIndex],
+      'start_time': startTime!.toIso8601String(),
+      'end_time': endTime!.toIso8601String(),
+      'test_type': widget.title,
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: json.encode(data),
+        );
+
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          // 成功：サーバーが正常にデータを受け付けた
+          debugPrint('Time data successfully sent to server.');
+        } else {
+          // 失敗：サーバー側でエラーが発生した
+          debugPrint('Faild to send data. Status code: ${response.statusCode}');
+        }
+    } catch (e) {
+      // 通信エラー（ネットワークがないなど）
+      debugPrint('Network error occurred: $e');
+    }
+  }
 
   @override
   void initState() { // 初期化したい時に使用するメソッド
@@ -28,6 +73,8 @@ class _BreathScreenState extends State<BreathScreen> {
 
     // 15分の音声再生を開始
     _playBackgroundAudio();
+
+    startTime = DateTime.now();
 
     // 1秒ごとに実行されるタイマーを開始
     _timer = Timer.periodic(
@@ -38,6 +85,10 @@ class _BreathScreenState extends State<BreathScreen> {
           if (_counter <= 0) {
           timer.cancel(); // カウントダウンが終了したらタイマーを止める
           _counter = 0;  // カウントがマイナスにならないようにする
+
+          endTime = DateTime.now();
+          _sendTimeToServer();
+
           _audioAndNavigator(); // タイマー終了時に通知音再生と画面遷移
           }
         });
@@ -48,7 +99,7 @@ class _BreathScreenState extends State<BreathScreen> {
   // 実験用音声を再生するメソッド
   void _playBackgroundAudio() async {
     // 15分の音声ファイルをセット
-    await backgroundPlayer.setSource(AssetSource('audio/breath_audio_sample.wav'));
+    await backgroundPlayer.setSource(AssetSource('audio/breath_audio.mp3'));
     await backgroundPlayer.resume();
   }
 
@@ -61,16 +112,18 @@ class _BreathScreenState extends State<BreathScreen> {
     await alarmPlayer.setSource(AssetSource('audio/alarm.mp3')); // 音声ファイル名
     await alarmPlayer.resume(); 
 
-    // 音の再生が完了するのを待つ
     alarmPlayer.onPlayerComplete.listen((_) {
-    // 再生が完了したら、AudioPlayerを解放
-    alarmPlayer.release();
-      
-      // 画面遷移
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const RestScreen(title: '休憩時間')),
+          MaterialPageRoute(
+            builder: (context) => RestScreen(
+              title: '休憩時間',
+              shuffledConditions: widget.shuffledConditions,
+              currentIndex: widget.currentIndex,
+              userId: '001',
+            ),
+          ),
         );
       }
     });
@@ -99,32 +152,42 @@ class _BreathScreenState extends State<BreathScreen> {
         backgroundColor: Colors.green,
       ),
       body: Center(
-        child: SizedBox(
-          width: 200,
-          height: 200,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0.0, end: progressValue),
-                duration: const Duration(milliseconds: 1000),
-                builder: (context, value, child) {
-                  return CircularProgressIndicator(
-                    value: value,
-                    strokeWidth: 10,
-                    backgroundColor: Colors.grey[200],
-                    valueColor: const AlwaysStoppedAnimation(Colors.blue),
-                  );
-                },
+        child: Column( // ここをColumnに変更
+          mainAxisAlignment: MainAxisAlignment.center, // 縦方向の中央寄せ
+          children: [
+            SizedBox( // StackをSizedBoxで囲む
+              width: 200,
+              height: 200,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  TweenAnimationBuilder<double>(
+                    tween: Tween<double>(begin: 0.0, end: progressValue),
+                    duration: const Duration(milliseconds: 1000),
+                    builder: (context, value, child) {
+                      return CircularProgressIndicator(
+                        value: value,
+                        strokeWidth: 10,
+                        backgroundColor: Colors.grey[200],
+                        valueColor: const AlwaysStoppedAnimation(Colors.blue),
+                      );
+                    },
+                  ),
+                  Center(
+                    child: Text(
+                      formattedTime,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                  ),
+                ],
               ),
-              Center(
-                child: Text(
-                  formattedTime,
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-              ),
-            ]
-          ),
+            ),
+            const SizedBox(height: 20), // プログレスバーとテキストの間に少しスペースを空ける
+            Text(
+              'voice:VOICEVOX Nemo', // ここにクレジット表記を直接配置
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ),
       ),
     );

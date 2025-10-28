@@ -2,25 +2,73 @@
 
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'package:expt/finish.dart';
+import 'package:expt/rest.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 // タイマー画面
 class MusicScreen extends StatefulWidget {
-  const MusicScreen({super.key, required this.title});
+  const MusicScreen({
+    super.key, 
+    required this.title,
+    required this.shuffledConditions,
+    required this.currentIndex,
+  });
 
   final String title;
+  final List<String> shuffledConditions;
+  final int currentIndex;
 
   @override
   State<MusicScreen> createState() => _MusicScreenState();
 }
 
 class _MusicScreenState extends State<MusicScreen> {
-  final int _totalTime = 900; // 合計時間
-  int _counter = 900; // 15分で初期化 => テストのため10秒で初期化
+  final int _totalTime = 10; // 合計時間
+  int _counter = 10; // 15分で初期化 => テストのため10秒で初期化
   late Timer _timer; // lateを使ってタイマー変数を宣言
   final backgroundPlayer = AudioPlayer(); // 実験音声用インスタンス
   final alarmPlayer = AudioPlayer(); // アラーム用インスタンス
+
+  DateTime? startTime; // タイマー開始時刻を保持
+  DateTime? endTime; // タイマー終了時刻を保持
+
+  Future<void> _sendTimeToServer() async {
+    // サーバーのAPIエンドポイントのURL
+    const url = 'http://localhost:3000/api/experiment-log';
+
+    // 送信するデータを作成（JSON形式）
+    final data = {
+      // ユーザーを一意に認識するIDを追加
+      'user_id': 'temporary_user_id',
+      'condition': widget.shuffledConditions[widget.currentIndex],
+      'start_time': startTime!.toIso8601String(),
+      'end_time': endTime!.toIso8601String(),
+      'test_type': widget.title,
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: json.encode(data),
+        );
+
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          // 成功：サーバーが正常にデータを受け付けた
+          debugPrint('Time data successfully sent to server.');
+        } else {
+          // 失敗：サーバー側でエラーが発生した
+          debugPrint('Faild to send data. Status code: ${response.statusCode}');
+        }
+    } catch (e) {
+      // 通信エラー（ネットワークがないなど）
+      debugPrint('Network error occurred: $e');
+    }
+  }
 
   @override
   void initState() { // 初期化したい時に使用するメソッド
@@ -28,6 +76,8 @@ class _MusicScreenState extends State<MusicScreen> {
 
     // 15分の音声再生を開始
     _playBackgroundAudio();
+
+    startTime = DateTime.now();
 
     // 1秒ごとに実行されるタイマーを開始
     _timer = Timer.periodic(
@@ -38,6 +88,13 @@ class _MusicScreenState extends State<MusicScreen> {
           if (_counter <= 0) {
           timer.cancel(); // カウントダウンが終了したらタイマーを止める
           _counter = 0;  // カウントがマイナスにならないようにする
+
+          endTime = DateTime.now();
+
+          // 時刻をサーバーに送信する
+          // 成功・失敗にかかわらず、画面遷移は実行する
+          _sendTimeToServer();
+
           _audioAndNavigator(); // タイマー終了時に通知音再生と画面遷移
           }
         });
@@ -61,16 +118,18 @@ class _MusicScreenState extends State<MusicScreen> {
     await alarmPlayer.setSource(AssetSource('audio/alarm.mp3')); // 音声ファイル名
     await alarmPlayer.resume(); 
 
-    // 音の再生が完了するのを待つ
     alarmPlayer.onPlayerComplete.listen((_) {
-    // 再生が完了したら、AudioPlayerを解放
-    alarmPlayer.release();
-      
-      // 画面遷移
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const ResultScreen()),
+          MaterialPageRoute(
+            builder: (context) => RestScreen(
+              title: '休憩時間',
+              shuffledConditions: widget.shuffledConditions,
+              currentIndex: widget.currentIndex,
+              userId: '001',
+            ),
+          ),
         );
       }
     });
