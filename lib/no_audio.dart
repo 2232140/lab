@@ -1,12 +1,11 @@
-// アファメーションテストページ
+// 無条件テストページ
 
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'package:expt/rest.dart';
+import 'package:expt/rest.dart'; // RestScreen の定義をインポート
 import 'package:audioplayers/audioplayers.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'finish.dart';
 import 'dart:math';
 
 // 1問ごとの詳細ログのデータ構造
@@ -15,7 +14,7 @@ class TaskLogEntry {
   final int correctAnswer;
   final int? userAnswer;
   final bool isCorrect;
-  final int timeStampSec;
+  final int timeStampSec; // タスク開始からの経過時間
   final String difficultyLevel;
 
   TaskLogEntry({
@@ -38,78 +37,71 @@ class TaskLogEntry {
   };
 }
 
-// タイマー画面
-class AffirmationScreen extends StatefulWidget {
-  const AffirmationScreen({
-    super.key,
-    required this.userId,
-    required this.title,
-    required this.shuffledConditions,
-    required this.currentIndex,
-  });
+// 四則演算タスク画面
+class ArithmeticTaskScreen extends StatefulWidget {
+    final String userId;
+    final String title;
+    final List<String> shuffledConditions; 
+    final int currentIndex; 
 
-  final String title;
-  final List<String> shuffledConditions;
-  final int currentIndex;
-  final String userId;
+    const ArithmeticTaskScreen({
+      super.key,
+      required this.userId,
+      required this.title,
+      required this.shuffledConditions, 
+      required this.currentIndex,
+    });
 
   @override
-  State<AffirmationScreen> createState() => _AffirmationScreenState();
+  State<ArithmeticTaskScreen> createState() => _ArithmeticTaskScreenState();
 }
 
-class _AffirmationScreenState extends State<AffirmationScreen> {
-  final int _totalTime = 60; // 合計時間
-  int _counter = 60; // 15分で初期化 => テストのため10秒で初期化
-  late Timer _timer; // lateを使ってタイマー変数を宣言
-  final backgroundPlayer = AudioPlayer(); // 実験音声用インスタンス
-  final alarmPlayer = AudioPlayer(); // アラーム用インスタンス
-  final Random _random = Random();
+class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
+  final int _totalTime = 30; // 制限時間（秒）
+  int _counter = 30;
+  late Timer _timer;
+  final TextEditingController _answerController = TextEditingController(); 
+  final player = AudioPlayer(); 
+  final alarmPlayer = AudioPlayer();
 
-  DateTime? startTime;
-  DateTime? endTime;
-
-  final TextEditingController _answerController = TextEditingController();
-  int _totalAnswered = 0; // 回答数
-  int _correctCount = 0; // 正答数
+  // タスクログ用メトリクス
+  int _correctCount = 0;
+  int _totalAnswered = 0;
+  // 詳細ログを格納するリスト
   final List<TaskLogEntry> _taskLog = [];
 
   // 現在のタスク
   String _currentQuestion = '';
   int _currentAnswer = 0;
   String _currentLevel = 'Level 1'; // 現在の難易度レベル
+  final Random _random = Random();
 
-final _isTaskFinished = false;
+  DateTime? startTime;
+  DateTime? endTime;
 
+  bool _isTaskFinished = false;
 
   @override
-  void initState() { // 初期化したい時に使用するメソッド
+  void initState() {
     super.initState();
-    // 15分の音声再生を開始
-    _playBackgroundAudio();
+
     _generateNewQuestion(); // 最初の問題生成
     startTime = DateTime.now();
+    _counter = _totalTime;
 
     _timer = Timer.periodic(
-      const Duration(seconds: 1), // 処理の実行時間
-      (Timer timer) { // 実行する処理
+      const Duration(seconds: 1),
+      (Timer timer) {
         setState(() {
-          _counter--; // _counter を１引く処理
+          _counter--;
+
           _updateDifficultyAndQuestion();
 
           if (_counter <= 0) {
-          timer.cancel(); // カウントダウンが終了したらタイマーを止める
-          _counter = 0;  // カウントがマイナスにならないようにする
-
-          endTime = DateTime.now();
-
-          // 時刻をサーバーに送信する
-          // 成功・失敗にかかわらず、画面遷移は実行する
-          _sendTimeToServer();
-
-          _audioAndNavigator(); // タイマー終了時に通知音再生と画面遷移
+            _endTask();
           }
         });
-      },
+      }
     );
   }
 
@@ -277,50 +269,49 @@ final _isTaskFinished = false;
     _generateNewQuestion();
   }
 
-  // 実験用音声を再生するメソッド
-  void _playBackgroundAudio() async {
-    // 15分の音声ファイルをセット
-    await backgroundPlayer.setSource(AssetSource('audio/affirmation_audio.mp3'));
-    await backgroundPlayer.resume();
+  // タスク終了処理
+  void _endTask() {
+    if (_isTaskFinished) return;
+
+    _timer.cancel();
+    _isTaskFinished = true;
+    endTime = DateTime.now();
+    _playAlarm();
+
+    _sendTimeToServer(); // サーバーにログを送信
+
+    final nextIndex = widget.currentIndex + 1;
+        
+    // 次の実験条件をチェック
+    if (nextIndex < widget.shuffledConditions.length) {
+      // 次のタスクがある場合、RestScreenに遷移
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => RestScreen(
+            title: '休憩時間',
+            shuffledConditions: widget.shuffledConditions,
+            currentIndex: nextIndex, // インデックスをインクリメントして渡す
+            userId: widget.userId, // userId も渡す必要がある (RestScreenのコードによる)
+          ),
+        ),
+      );
+    } else {
+      // すべてのタスクが終了した場合、ResultScreen (アンケートなど) に遷移
+      Navigator.pushReplacement(
+        context,
+          MaterialPageRoute(
+          // 遷移先の画面はプロジェクトに合わせて修正
+          builder: (context) => const Placeholder(), 
+        ),
+      );
+    }
   }
 
-  // 実験用音声を停止し、アラームを鳴らして画面遷移するメソッド
-  void _audioAndNavigator() async {
-    // 実験用音声を停止
-    await backgroundPlayer.stop();
-
-    // アラーム音を再生
-    await alarmPlayer.setSource(AssetSource('audio/alarm.mp3')); // 音声ファイル名
-    await alarmPlayer.resume(); 
-
-    // 音の再生が完了するのを待つ
-    alarmPlayer.onPlayerComplete.listen((_) {
-      if (mounted) {
-        final nextIndex = widget.currentIndex + 1;
-        if (nextIndex < widget.shuffledConditions.length) {
-          Navigator.pushReplacement(
-          context,
-            MaterialPageRoute(
-              builder: (context) => RestScreen(
-                title: '休憩時間',
-                shuffledConditions: widget.shuffledConditions,
-                currentIndex: widget.currentIndex + 1,
-                userId: widget.userId,
-              ),
-            ),
-          );
-        } else {
-          // 全てのタスクが終了したとき、ResultScreenへ遷移
-          Navigator.pushReplacement(
-            context, 
-            MaterialPageRoute(
-              builder: (context) => const ResultScreen(),
-            ),
-          );
-        }
-      }
-    });
+  Future<void> _playAlarm() async {
+    await alarmPlayer.setSource(AssetSource('audio/alarm.mp3'));
   }
+
   // ログ送信関数 (正答率を含むデータを送信)
   Future<void> _sendTimeToServer() async {
     const url = 'http://localhost:3000/api/experiment-log'; // サーバーのURL
@@ -358,15 +349,15 @@ final _isTaskFinished = false;
       debugPrint('通信エラー: $e');
     }
   }
-
+  
   @override
   void dispose() {
-    _timer.cancel(); // メモリリークを防ぐためにタイマーを破棄
-    backgroundPlayer.stop();
-    backgroundPlayer.dispose(); // AudioPlayerを破棄
-    
+    _timer.cancel();
     alarmPlayer.stop();
     alarmPlayer.dispose();
+    player.stop();
+    player.dispose();
+    _answerController.dispose();
     super.dispose();
   }
 
