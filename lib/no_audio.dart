@@ -1,128 +1,345 @@
-// 無条件テストページ
-
-// no_audio.dart (修正版 - タイマー付き四則演算タスクと進行管理)
+// アファメーションテストページ
 
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'package:expt/rest.dart'; // RestScreen の定義をインポート
+import 'package:expt/rest.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'finish.dart';
 import 'dart:math';
 
-// 四則演算タスク画面
-class ArithmeticTaskScreen extends StatefulWidget {
-    final String userId;
-    final String title;
-    // ⚡️ 復活: シャッフルされた条件リスト
-    final List<String> shuffledConditions; 
-    // ⚡️ 復活: 現在のインデックス
-    final int currentIndex; 
+// 1問ごとの詳細ログのデータ構造
+class TaskLogEntry {
+  final String question;
+  final int correctAnswer;
+  final int? userAnswer;
+  final bool isCorrect;
+  final int timeStampSec;
+  final String difficultyLevel;
 
-    const ArithmeticTaskScreen({
-      super.key,
-      required this.userId,
-      required this.title,
-      // ⚡️ 追加: シャッフルプロパティ
-      required this.shuffledConditions, 
-      required this.currentIndex,
-    });
+  TaskLogEntry({
+    required this.question,
+    required this.correctAnswer,
+    this.userAnswer,
+    required this.isCorrect,
+    required this.timeStampSec,
+    required this.difficultyLevel,
+  });
 
-  @override
-  State<ArithmeticTaskScreen> createState() => _ArithmeticTaskScreenState();
+  // サーバー送信用のJSON形式に変換
+  Map<String, dynamic> toJson() => {
+    'question': question,
+    'correct_answer': correctAnswer,
+    'user_answer': userAnswer,
+    'is_correct': isCorrect,
+    'time_stamp_sec': timeStampSec,
+    'difficulty_level': difficultyLevel,
+  };
 }
 
-class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
-  final int _totalTime = 60; // 制限時間（秒）
-  int _counter = 60;
-  late Timer _timer;
-  // ⚡️ 修正: _answerContoroller -> _answerController にタイポ修正
-  final TextEditingController _answerController = TextEditingController(); 
+// タイマー画面
+class AffirmationScreen extends StatefulWidget {
+  const AffirmationScreen({
+    super.key,
+    required this.userId,
+    required this.title,
+    required this.shuffledConditions,
+    required this.currentIndex,
+  });
+
+  final String title;
+  final List<String> shuffledConditions;
+  final int currentIndex;
+  final String userId;
+
+  @override
+  State<AffirmationScreen> createState() => _AffirmationScreenState();
+}
+
+class _AffirmationScreenState extends State<AffirmationScreen> {
+  final int _totalTime = 60; // 合計時間
+  int _counter = 60; // 15分で初期化 => テストのため10秒で初期化
+  late Timer _timer; // lateを使ってタイマー変数を宣言
+  final backgroundPlayer = AudioPlayer(); // 実験音声用インスタンス
+  final alarmPlayer = AudioPlayer(); // アラーム用インスタンス
   final Random _random = Random();
-  final player = AudioPlayer(); 
-
-  // タスクログ用メトリクス
-  int _correctCount = 0;
-  int _totalAnswered = 0;
-
-  // 現在のタスク
-  String _currentQuestion = '';
-  int _currentAnswer = 0;
 
   DateTime? startTime;
   DateTime? endTime;
 
+  final TextEditingController _answerController = TextEditingController();
+  int _totalAnswered = 0; // 回答数
+  int _correctCount = 0; // 正答数
+  final List<TaskLogEntry> _taskLog = [];
+
+  // 現在のタスク
+  String _currentQuestion = '';
+  int _currentAnswer = 0;
+  String _currentLevel = 'Level 1'; // 現在の難易度レベル
+
+final _isTaskFinished = false;
+
+
   @override
-  void initState() {
+  void initState() { // 初期化したい時に使用するメソッド
     super.initState();
+    // 15分の音声再生を開始
+    _playBackgroundAudio();
     _generateNewQuestion(); // 最初の問題生成
     startTime = DateTime.now();
-    _counter = _totalTime;
 
     _timer = Timer.periodic(
-      const Duration(seconds: 1),
-      (Timer timer) {
+      const Duration(seconds: 1), // 処理の実行時間
+      (Timer timer) { // 実行する処理
         setState(() {
-          _counter--;
+          _counter--; // _counter を１引く処理
+          _updateDifficultyAndQuestion();
+
           if (_counter <= 0) {
-            timer.cancel();
-            endTime = DateTime.now();
-            _sendTaskLogToServer();
-            _playAudioAndNavigator(); // タイマー終了時に通知音再生と画面遷移
+          timer.cancel(); // カウントダウンが終了したらタイマーを止める
+          _counter = 0;  // カウントがマイナスにならないようにする
+
+          endTime = DateTime.now();
+
+          // 時刻をサーバーに送信する
+          // 成功・失敗にかかわらず、画面遷移は実行する
+          _sendTimeToServer();
+
+          _audioAndNavigator(); // タイマー終了時に通知音再生と画面遷移
           }
         });
-      }
+      },
     );
   }
 
-  // 問題生成ロジック (変更なし)
-  void _generateNewQuestion() {
-    final a = _random.nextInt(89) + 10;
-    final b = _random.nextInt(8) + 2;
+  // 経過時間に応じて難易度を更新し、新しい問題を生成する
+  void _updateDifficultyAndQuestion() {
+    final elapsedTime = _totalTime - _counter;
 
-    _currentQuestion = '$a + $b = ?';
-    _currentAnswer = a + b;
+    String nextLevel;
+    if (elapsedTime < 300) { // 5分未満
+      nextLevel = 'Level 1';
+    } else if (elapsedTime < 600) { // 5分以上10分未満
+      nextLevel = 'Level 2';
+    } else {
+      nextLevel = 'Level 3';
+    }
+
+    // 難易度が変わった場合のみ新しい問題を生成
+    if (_currentLevel != nextLevel) {
+      _currentLevel = nextLevel;
+      _generateNewQuestion();
+    }
   }
 
-  // 回答チェックとメトリクス更新 (変更なし)
-  void _checkAnswer() {
-    if (_answerController.text.isEmpty) return;
+  // 難易度に応じた問題生成ロジック
+  void _generateNewQuestion() {
+    int num1, num2, num3;
+    String operator, question;
+    int answer = 0;
 
-    final userAnswer = int.tryParse(_answerController.text);
+    // 経過時間に応じた問題の生成
+    switch (_currentLevel) {
+      case 'Level 3':
+      // Level 3: 三つの数字のタスク、または結果が負の数になる可能性がある計算
+      if (_random.nextBool()) {
+        // 三つの数字の計算
+        num1 = _random.nextInt(20) + 1; // 1~20
+        num2 = _random.nextInt(20) + 1;
+        num3 = _random.nextInt(20) + 1; 
+        
+        List<String> ops = ['+', '-', '*']; // 3項演算では割り算は避ける
+        String op1 = ops[_random.nextInt(ops.length)];
+        String op2 = ops[_random.nextInt(ops.length)];
 
-    if (userAnswer == null) {
-      _answerController.clear();
-      return;
+        question = '$num1 $op1 $num2 $op2 $num3';
+
+        // 演算順序の計算
+        int intermediate;
+        switch (op1) {
+          case '+': intermediate = num1 + num2; break;
+          case '-': intermediate = num1 - num2; break;
+          case '*': intermediate = num1 * num2; break;
+          default: intermediate = 0;
+        }
+
+        switch (op2) {
+          case '+': answer = intermediate + num3; break;
+          case '-': answer = intermediate - num3; break;
+          case '*': answer = intermediate * num3; break;
+          default: answer = 0;
+        }
+      } else {
+        // 負の数も含む可能性のある引き算/掛け算
+        num1 = _random.nextInt(50) + 10; // 10~60
+        num2 = _random.nextInt(50) + 1; // 1~50
+        operator = _random.nextBool() ? '-' : '*';
+        question = '$num1 $operator $num2';
+
+        if (operator == '-') {
+          answer = num1 - num2;
+        } else {
+          answer = num1 * num2;
+        }
+      }
+      break;
+
+    case 'Level 2':
+      // Level 2: 四則演算（足し算、引き算、簡単な掛け算/割り算）
+      num1 = _random.nextInt(50) + 10; // 10~59
+      num2 = _random.nextInt(9) + 1; // 1~9
+
+      List<String> ops = ['+', '-', '*', '/'];
+      operator = ops[_random.nextInt(ops.length)];
+
+      switch (operator) {
+        case '+':
+          answer = num1 + num2;
+          break;
+        case '-':
+          // 結果が負にならないようにする
+          if (num1 < num2) {
+            int temp = num1;
+            num1 = num2;
+            num2 = temp;
+          }
+          answer = num1 - num2;
+          break;
+        case '*':
+          // 積が大きくなりすぎないように調整
+          num2 = _random.nextInt(5) + 1;
+          answer = num1 * num2;
+          break;
+        case '/':
+         // 割り切れる問題のみを生成
+         int divisor = _random.nextInt(9) + 1;
+         answer = _random.nextInt(9) + 1;
+         num1 = divisor * answer;
+         num2 = divisor;
+         operator = '/';
+         break;
+        default:
+          answer = 0;
+      }
+      question = '$num1 $operator $num2';
+      break;
+
+    case 'Level 1':
+    default:
+      // Level 1: シンプルな足し算
+      num1 = _random.nextInt(80) + 10;
+      num2 = _random.nextInt(9) + 1;
+      question = '$num1 + $num2';
+      answer = num1 + num2;
+      _currentLevel = 'Level 1';
+      break;
     }
 
     setState(() {
-      _totalAnswered++;
-      if (userAnswer == _currentAnswer) {
-        _correctCount++;
-      }
+      _currentQuestion = question;
+      _currentAnswer = answer;
       _answerController.clear();
-      _generateNewQuestion();
     });
   }
 
+  // 回答チェックとログ記録
+  void _checkAnswer() {
+    if (_isTaskFinished) return;
+
+    final userAnswerText = _answerController.text.trim();
+
+    if (userAnswerText.isEmpty) {
+      // 未回答はスキップ
+      return;
+    }
+
+    final int? userAnswer = int.tryParse(userAnswerText);
+    final bool isCorrect = userAnswer != null && userAnswer == _currentAnswer;
+
+    // ログを記録
+    final entry = TaskLogEntry(
+      question: _currentQuestion, 
+      correctAnswer: _currentAnswer, 
+      userAnswer: userAnswer,
+      isCorrect: isCorrect, 
+      timeStampSec: _totalTime - _counter, 
+      difficultyLevel: _currentLevel,
+    );
+    _taskLog.add(entry);
+
+    // メトリクスを更新
+    _totalAnswered++;
+    if (isCorrect) {
+      _correctCount++;
+    }
+
+    _generateNewQuestion();
+  }
+
+  // 実験用音声を再生するメソッド
+  void _playBackgroundAudio() async {
+    // 15分の音声ファイルをセット
+    await backgroundPlayer.setSource(AssetSource('audio/affirmation_audio.mp3'));
+    await backgroundPlayer.resume();
+  }
+
+  // 実験用音声を停止し、アラームを鳴らして画面遷移するメソッド
+  void _audioAndNavigator() async {
+    // 実験用音声を停止
+    await backgroundPlayer.stop();
+
+    // アラーム音を再生
+    await alarmPlayer.setSource(AssetSource('audio/alarm.mp3')); // 音声ファイル名
+    await alarmPlayer.resume(); 
+
+    // 音の再生が完了するのを待つ
+    alarmPlayer.onPlayerComplete.listen((_) {
+      if (mounted) {
+        final nextIndex = widget.currentIndex + 1;
+        if (nextIndex < widget.shuffledConditions.length) {
+          Navigator.pushReplacement(
+          context,
+            MaterialPageRoute(
+              builder: (context) => RestScreen(
+                title: '休憩時間',
+                shuffledConditions: widget.shuffledConditions,
+                currentIndex: widget.currentIndex + 1,
+                userId: widget.userId,
+              ),
+            ),
+          );
+        } else {
+          // 全てのタスクが終了したとき、ResultScreenへ遷移
+          Navigator.pushReplacement(
+            context, 
+            MaterialPageRoute(
+              builder: (context) => const ResultScreen(),
+            ),
+          );
+        }
+      }
+    });
+  }
   // ログ送信関数 (正答率を含むデータを送信)
-  Future<void> _sendTaskLogToServer() async {
+  Future<void> _sendTimeToServer() async {
     const url = 'http://localhost:3000/api/experiment-log'; // サーバーのURL
 
     final accuracyRate = _totalAnswered > 0 ? (_correctCount / _totalAnswered) : 0.0;
-    
+
     final data = {
       'user_id': widget.userId,
       'start_time': startTime!.toIso8601String(),
       'end_time': endTime!.toIso8601String(),
       'test_type': widget.title,
-      // ⚡️ conditionに現在の実験条件を設定
+      // 現在の実験条件を設定
       'condition': widget.shuffledConditions[widget.currentIndex], 
       
       // 計算結果を送信
       'total_answered': _totalAnswered,
       'correct_count': _correctCount,
       'accuracy_rate': accuracyRate,
+      'detailed_task_log': _taskLog.map((e) => e.toJson()).toList(),
     };
 
     try {
@@ -133,69 +350,37 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        debugPrint('タスクログをサーバーに正常送信');
+        debugPrint('ログ送信成功： ${response.body}');
       } else {
-        debugPrint('データ送信失敗。Status code: ${response.statusCode}');
+        debugPrint('ログ送信エラー: ${response.statusCode}, ${response.body}');
       }
     } catch (e) {
-      debugPrint('ネットワークエラー: $e');
+      debugPrint('通信エラー: $e');
     }
   }
 
-  // 画面遷移ロジック (シャッフル機能の保持)
-  void _playAudioAndNavigator() async {
-    // ローカルセットアップの音声を再生
-    await player.setSource(AssetSource('audio/alarm.mp3'));
-    await player.resume(); 
-
-    player.onPlayerComplete.listen((_) {
-      if (mounted) {
-        final nextIndex = widget.currentIndex + 1;
-        
-        // ⚡️ 次の実験条件をチェック
-        if (nextIndex < widget.shuffledConditions.length) {
-          // 次のタスクがある場合、RestScreenに遷移
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => RestScreen(
-                title: '休憩時間',
-                shuffledConditions: widget.shuffledConditions,
-                currentIndex: nextIndex, // ⚡️ インデックスをインクリメントして渡す
-                userId: widget.userId, // userId も渡す必要がある (RestScreenのコードによる)
-              ),
-            ),
-          );
-        } else {
-          // すべてのタスクが終了した場合、ResultScreen (アンケートなど) に遷移
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              // 遷移先の画面はプロジェクトに合わせて修正
-              builder: (context) => const Placeholder(), 
-            ),
-          );
-        }
-      }
-    });
-  }
-  
   @override
   void dispose() {
-    _timer.cancel();
-    player.dispose();
-    _answerController.dispose();
+    _timer.cancel(); // メモリリークを防ぐためにタイマーを破棄
+    backgroundPlayer.stop();
+    backgroundPlayer.dispose(); // AudioPlayerを破棄
+    
+    alarmPlayer.stop();
+    alarmPlayer.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     // 秒数を見やすい形式に変換
-    String formattedTime = "${(_counter % 60).toString().padLeft(2, '0')}";
+    final int minutes = _counter ~/ 60; // 60で割った商（分）
+    final int seconds = _counter % 60; // 60で割った余り（秒）
+    String formattedTime = 
+        '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: Text('${widget.title} ($_currentLevel)'),
         backgroundColor: Colors.blue,
       ),
       body: Center(
@@ -232,6 +417,7 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
                     border: OutlineInputBorder(),
                   ),
                   onSubmitted: (_) => _checkAnswer(), // Enterキーでチェック
+                  enabled: !_isTaskFinished,
                 ),
               ),
               const SizedBox(height: 30),
@@ -248,6 +434,10 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
               Text(
                 '正答数: $_correctCount / 回答数: $_totalAnswered',
                 style: const TextStyle(fontSize: 20),
+              ),
+              Text(
+              '難易度： $_currentLevel',
+              style: const TextStyle(fontSize: 16, color: Colors.grey),
               ),
             ],
           )
