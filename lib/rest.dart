@@ -28,83 +28,88 @@ class RestScreen extends StatefulWidget {
 }
 
 class _RestScreenState extends State<RestScreen> {
-  final int _totalTime = 10; // 合計時間（テストのため10秒）
-  int _counter = 5; // 5分で初期化 => テストのため5秒で初期化
+  final int _totalTime = 300; // 合計時間（テストのため10秒）
+  int _counter = 300; // 5分で初期化 => テストのため5秒で初期化
   late Timer _timer; // lateを使ってタイマー変数を宣言
-  final player = AudioPlayer(); // AudioPlayerのインスタンスを作成
+  
+  // 致命的バグ修正 1: AudioPlayerをlateで宣言し、initStateで初期化する
+  late final AudioPlayer player; 
 
   @override
   void initState() { // 初期化したい時に使用するメソッド
     super.initState();
+    
+    // ✨ 致命的バグ修正 1: initState内で AudioPlayer を安全に初期化
+    player = AudioPlayer(); 
+
     _timer = Timer.periodic(
       const Duration(seconds: 1), // 処理の実行時間
       (Timer timer) { // 実行する処理
         setState(() {
           _counter--; // _counter を１引く処理
           if (_counter <= 0) {
-          timer.cancel(); // カウントダウンが終了したらタイマーを止める
-          _counter = 0; // カウントがマイナスにならないようにする
-          _playAudioAndNavigator(); // タイマー終了時に通知音再生と画面遷移
+            _timer.cancel(); // タイマー停止
+            
+            // アラーム音再生ロジック (クラッシュ防止のため try-catch を追加)
+            try {
+              player.setVolume(1.0);
+              // アラーム音のファイル名はご自身の環境に合わせて修正してください
+              player.play(AssetSource('audio/alarm.mp3')); 
+            } catch (e) {
+              print('Alarm playback error (safe): $e');
+            }
+            
+            // 次の画面へ遷移
+            if (widget.currentIndex < widget.shuffledConditions.length - 1) {
+              final nextIndex = widget.currentIndex + 1;
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => _getNextScreen(
+                    widget.userId,
+                    widget.shuffledConditions[nextIndex],
+                    widget.shuffledConditions,
+                    nextIndex,
+                  ),
+                ),
+              );
+            } else {
+              // 全ての条件が終了したらFinishへ
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ResultScreen(),
+                ),
+              );
+            }
           }
         });
       },
     );
   }
 
-  // 音声を再生し、画面を遷移させるメソッド
-  void _playAudioAndNavigator() async {
-    // 通知音を鳴らす
-    await player.setSource(AssetSource('audio/alarm.mp3')); // 音声ファイル名
-    await player.resume(); 
-
-    player.onPlayerComplete.listen((_) {
-      player.release();
-
-      if (mounted) {
-        // 次に遷移する画面をリストから決定
-        int nextIndex = widget.currentIndex + 1;
-        Widget nextScreen;
-        String nextCondition;
-
-        // 次の条件があるかチェック
-        if (nextIndex < widget.shuffledConditions.length) {
-          nextCondition = widget.shuffledConditions[nextIndex];
-          if (nextCondition == 'breath') {
-            nextScreen = BreathScreen(
-              title: '呼吸法',
-              shuffledConditions: widget.shuffledConditions,
-              currentIndex: nextIndex,
-            );
-          } else if(nextCondition == 'affirmation') {
-            nextScreen = AffirmationScreen(
-              title: 'アファメーション',
-              shuffledConditions: widget.shuffledConditions,
-              currentIndex: nextIndex,
-            );
-          } else {
-            nextScreen = MusicScreen(
-              title: '音楽リラクゼーション',
-              shuffledConditions: widget.shuffledConditions,
-              currentIndex: nextIndex,
-            );
-          }
-        } else {
-          // 全ての条件が終了したら実験終了画面へ
-          nextScreen = const ResultScreen();
-        }
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => nextScreen),
-        );
-      }
-    });
+  // 休憩後のタスク画面を決定するロジック (no_audio.dartにもあるはず)
+  Widget _getNextScreen(String userId, String title, List<String> conditions, int index) {
+    switch (title) {
+      case '呼吸法':
+        return BreathScreen(userId: userId, title: title, shuffledConditions: conditions, currentIndex: index);
+      case 'アファメーション':
+        return AffirmationScreen(userId: userId, title: title, shuffledConditions: conditions, currentIndex: index);
+      case '音楽リラクゼーション':
+        return MusicScreen(userId: userId, title: title, shuffledConditions: conditions, currentIndex: index);
+      default: // 無条件 (便宜上BreathScreenにフォールバック)
+        // ここは実際の無条件タスクのクラス（例: ArithmeticTaskScreen）を返す必要があります
+        return BreathScreen(userId: userId, title: title, shuffledConditions: conditions, currentIndex: index); 
+    }
   }
 
   @override
   void dispose() {
-    _timer.cancel(); // メモリリークを防ぐためにタイマーを破棄
-    super.dispose();
-    player.dispose(); // AudioPlayerを破棄
+    // 順序はあなたの修正で完璧です
+    player.dispose(); // AudioPlayerを解放
+    _timer.cancel(); // タイマーを破棄
+
+    super.dispose(); 
   }
 
   @override

@@ -4,13 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:audioplayers/audioplayers.dart';
 
-final player = AudioPlayer();
-const audioPath = 'audio/practice.mp3';
+const audioPath = 'audio/audio_practice.mp3';
 
-class  PracticePage extends StatelessWidget {
+class  PracticePage extends StatefulWidget {
   const PracticePage({super.key});
 
-  // 戻るボタン
+  @override
+  State<PracticePage> createState() => _PracticePageState(); 
+}
+
+class _PracticePageState extends State<PracticePage> { 
+  // 3. AudioPlayerをStateクラス内に移動
+  final player = AudioPlayer(); 
+
   back(BuildContext context) {
     // 前の画面に戻る
     context.pop();
@@ -18,6 +24,13 @@ class  PracticePage extends StatelessWidget {
 
   void _stopAudio() async {
     await player.stop();
+  }
+  
+  // 4. dispose()を追加して解放 (順序は完璧です)
+  @override
+  void dispose() {
+    player.dispose(); 
+    super.dispose();
   }
 
   @override
@@ -52,16 +65,20 @@ class  PracticePage extends StatelessWidget {
 
     // 音声再生ボタン
     final audiobutton = ElevatedButton(
-      onPressed: () {
-        player.play(AssetSource(audioPath));
+      onPressed: () async { // ✨ 修正: asyncを追加
+        try {
+          await player.play(AssetSource(audioPath)); // ✨ 修正: try-catchで再生を保護
+        } catch (e) {
+          print('Audio playback error (safe): $e');
+        }
       },
-      child: Text('音声を再生する'),
+      child: const Text('音声を再生する'),
     );
 
     // 音声停止ボタン
     final stopbutton = ElevatedButton(
       onPressed: _stopAudio,
-      child: Text('音声を停止する'),
+      child: const Text('音声を停止する'),
     );
 
     // 画面全体
@@ -71,8 +88,8 @@ class  PracticePage extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            Text(
-              '音声を再生し、指示に従ってください。\n問題ない場合は、ホーム画面に戻ってお待ちください。',
+            const Text(
+              '音声を再生し、指示に従ってください。\\n問題ない場合は、ホーム画面に戻ってお待ちください。',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 15,
@@ -80,12 +97,17 @@ class  PracticePage extends StatelessWidget {
             ),
             audiobutton,
             stopbutton,
-            Text('voice:VOICEVOX Nemo'),
-            backButton,
-            homebutton,
+            const Text('voice:VOICEVOX Nemo'),
+            Row( // 戻る/ホームボタンを横並びに
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                backButton,
+                homebutton,
+              ]
+            )
           ],
-        ),
-      ),
+        )
+      )
     );
   }
 }

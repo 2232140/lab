@@ -1,5 +1,6 @@
 // 無条件テストページ
 
+import 'package:expt/finish.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:expt/rest.dart'; // RestScreen の定義をインポート
@@ -57,8 +58,8 @@ class ArithmeticTaskScreen extends StatefulWidget {
 }
 
 class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
-  final int _totalTime = 30; // 制限時間（秒）
-  int _counter = 30;
+  final int _totalTime = 900; // 制限時間（秒）
+  int _counter = 900;
   late Timer _timer;
   final TextEditingController _answerController = TextEditingController(); 
   final player = AudioPlayer(); 
@@ -80,6 +81,27 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
   DateTime? endTime;
 
   bool _isTaskFinished = false;
+
+  Color _questionColor = Colors.black; // 数式の色
+  Timer? _flashTimer; // 1秒遅延用のタイマー
+
+  // 問題ごとの時間制限設定
+  final Map<String, int> _levelTimerLimits = const {
+    'Level 1': 10,
+    'Level 2': 15,
+    'Level 3': 20,
+  };
+  int _questionLimit = 10; // 現在の問題の制限時間
+  int _questionCounter = 10; // 現在の問題の残り時間
+  Timer? _questionTimer; // 問題ごとのタイマー
+
+  // 背景色と、色が変わる時間のリスト
+  final List<Color> _backgroundColors = [
+    Colors.yellow.shade100, // 600秒経過後
+    Colors.orangeAccent.shade100, // 300秒経過後
+  ];
+  final List<int> _colorThresholds = [600, 300]; // 残り時間（秒）
+  Color _currentBackgroundColor = Colors.white;
 
   @override
   void initState() {
@@ -125,6 +147,55 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
     }
   }
 
+  // 問題ごとのタイマーを開始する
+  void _startQuestionTimer() {
+    _questionTimer?.cancel();
+
+    _questionLimit = _levelTimerLimits[_currentLevel] ?? 10;
+    _questionCounter = _questionLimit;
+
+    _questionTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_questionCounter > 0) {
+        setState(() {
+          _questionCounter--;
+        });
+      } else {
+        _questionTimer?.cancel();
+        _handleQuestionTimeout();
+      }
+    });
+  }
+
+  // 問題の制限時間切れを処理する
+  void _handleQuestionTimeout() {
+    if (_isTaskFinished) return;
+    _questionTimer?.cancel();
+
+    // ログ記録
+    final entry = TaskLogEntry(
+      question: _currentQuestion, 
+      correctAnswer: _currentAnswer, 
+      userAnswer: null,
+      isCorrect: false, 
+      timeStampSec: _totalTime - _counter, 
+      difficultyLevel: _currentLevel,
+    );
+    _taskLog.add(entry);
+
+    _totalAnswered++; // 回数にカウント
+
+    // 視覚的フィードバック
+    setState(() {
+      _questionColor = Colors.red;
+    });
+
+    // 1秒待ってから次の問題へ
+    _flashTimer?.cancel();
+    _flashTimer = Timer(const Duration(seconds: 1), () {
+      _generateNewQuestion();
+    });
+  }
+
   // 難易度に応じた問題生成ロジック
   void _generateNewQuestion() {
     int num1, num2, num3;
@@ -147,35 +218,57 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
 
         question = '$num1 $op1 $num2 $op2 $num3';
 
-        // 演算順序の計算
-        int intermediate;
-        switch (op1) {
-          case '+': intermediate = num1 + num2; break;
-          case '-': intermediate = num1 - num2; break;
-          case '*': intermediate = num1 * num2; break;
-          default: intermediate = 0;
+        // 演算順序の優先度を取得
+        int getPriority(String op) {
+          if (op == '*' || op == '/') return 2;
+          if (op == '+' || op == '-') return 1;
+          return 0;
         }
 
+        final p1 = getPriority(op1);
+        final p2 = getPriority(op2);
+
+        int intermediateResult = 0;
+
+        // 優先順位が op1 >= op2 の場合
+        if (p1 >= p2) {
+          switch (op1) {
+            case '+': intermediateResult = num1 + num2; break;
+            case '-': intermediateResult = num1 - num2; break;
+            case '*': intermediateResult = num1 * num2; break;
+          }
+
+          switch (op2) {
+            case '+': answer = intermediateResult + num3; break;
+            case '-': answer = intermediateResult - num3; break;
+            case '*': answer = intermediateResult * num3; break;
+            case '/': answer = intermediateResult ~/ num3; break;
+          }
+        } else { // 優先順位がop2 > op1 の場合
         switch (op2) {
-          case '+': answer = intermediate + num3; break;
-          case '-': answer = intermediate - num3; break;
-          case '*': answer = intermediate * num3; break;
-          default: answer = 0;
+          case '*': intermediateResult = num2 * num3; break;
+          case '/': intermediateResult = num2 ~/ num3; break;
+          default:intermediateResult = 0;
         }
-      } else {
-        // 負の数も含む可能性のある引き算/掛け算
-        num1 = _random.nextInt(50) + 10; // 10~60
-        num2 = _random.nextInt(50) + 1; // 1~50
-        operator = _random.nextBool() ? '-' : '*';
-        question = '$num1 $operator $num2';
 
-        if (operator == '-') {
-          answer = num1 - num2;
-        } else {
-          answer = num1 * num2;
+        switch (op1) {
+          case '+': answer = num1 + intermediateResult; break;
+          case '-': answer = num1 - intermediateResult; break;
         }
       }
-      break;
+    }else {
+      num1 = _random.nextInt(50) + 10; // 10~60
+      num2 = _random.nextInt(50) + 1; // 1~50
+      operator = _random.nextBool() ? '-' : '*';
+      question = '$num1 $operator $num2';
+
+      if (operator == '-') {
+        answer = num1 -num2;
+      } else {
+        answer = num1 * num2;
+      }
+    }
+    break;
 
     case 'Level 2':
       // Level 2: 四則演算（足し算、引き算、簡単な掛け算/割り算）
@@ -232,12 +325,40 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
       _currentQuestion = question;
       _currentAnswer = answer;
       _answerController.clear();
+      // 常に色を黒に戻す
+      _questionColor = Colors.black;
     });
+
+    _flashTimer?.cancel();
+
+    // 問題ごとのタイマーをスタート
+    _startQuestionTimer();
+
+    // 残り時間に応じて背景色を更新
+    _updateBackgroundColor();
+  }
+
+  // 背景色を更新するメソッド
+  void _updateBackgroundColor() {
+    for (int i = 0; i < _colorThresholds.length; i++) {
+      if (_counter >= _colorThresholds[i]) {
+        // 残り時間が閾値以上の場合、その色に設定
+        Color nextColor = _backgroundColors[i];
+        if (_currentBackgroundColor != nextColor) {
+          _currentBackgroundColor = nextColor;
+        }
+        break;
+      }
+    }
   }
 
   // 回答チェックとログ記録
   void _checkAnswer() {
+    // キーボードを閉じる
+    FocusScope.of(context).unfocus();
+
     if (_isTaskFinished) return;
+    if (_flashTimer != null && _flashTimer!.isActive) return;
 
     final userAnswerText = _answerController.text.trim();
 
@@ -266,19 +387,41 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
       _correctCount++;
     }
 
-    _generateNewQuestion();
+    if (isCorrect) {
+      // 正解の場合：問題タイマーを停止し、すぐに次の問題へ
+      _questionTimer?.cancel();
+      _generateNewQuestion();
+    } else {
+      _questionTimer?.cancel();
+      // 不正解の場合：問題タイマーを停止、赤色にして1秒待機してから次の問題へ
+      setState(() {
+        // 数式の色を赤に設定
+        _questionColor = const Color(0xFFFF0000);
+      });
+
+      _flashTimer?.cancel();
+      // 1秒後に次の問題へ移行
+      _flashTimer = Timer(const Duration(seconds: 1), () {
+        // _generateNewQuestion() の中で色も黒に戻り、UIがリセットされる
+        _generateNewQuestion();
+      });
+    }
   }
 
   // タスク終了処理
-  void _endTask() {
+  void _endTask() async{
     if (_isTaskFinished) return;
 
     _timer.cancel();
+    _questionTimer?.cancel();
     _isTaskFinished = true;
     endTime = DateTime.now();
-    _playAlarm();
+    // アラームが鳴り終わるのを待つ
+    await _playAlarm();
 
-    _sendTimeToServer(); // サーバーにログを送信
+    await _sendTimeToServer(); // サーバーにログを送信
+
+    if (!mounted) return;
 
     final nextIndex = widget.currentIndex + 1;
         
@@ -302,19 +445,29 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
         context,
           MaterialPageRoute(
           // 遷移先の画面はプロジェクトに合わせて修正
-          builder: (context) => const Placeholder(), 
+          builder: (context) => const ResultScreen(), 
         ),
       );
     }
   }
 
   Future<void> _playAlarm() async {
-    await alarmPlayer.setSource(AssetSource('audio/alarm.mp3'));
+    final completer = Completer<void>();
+
+    // リスナーを設定し、再生が完了したらCompleterを完了させる
+    alarmPlayer.onPlayerComplete.listen((event) {
+        if (!completer.isCompleted) {
+            completer.complete();
+        }
+    });
+
+    await alarmPlayer.play(AssetSource('audio/alarm.mp3'));
+    await completer.future;
   }
 
   // ログ送信関数 (正答率を含むデータを送信)
   Future<void> _sendTimeToServer() async {
-    const url = 'http://localhost:3000/api/experiment-log'; // サーバーのURL
+    const url = 'http://192.168.11.26:3000/api/experiment-log'; // サーバーのURL
 
     final accuracyRate = _totalAnswered > 0 ? (_correctCount / _totalAnswered) : 0.0;
 
@@ -353,6 +506,8 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
   @override
   void dispose() {
     _timer.cancel();
+    _questionTimer?.cancel();
+    _flashTimer?.cancel();
     alarmPlayer.stop();
     alarmPlayer.dispose();
     player.stop();
@@ -369,71 +524,111 @@ class _ArithmeticTaskScreenState extends State<ArithmeticTaskScreen> {
     String formattedTime = 
         '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
+    // 点滅中はボタンを無効化
+    final bool isInputEnabled = !_isTaskFinished && (_flashTimer == null || !_flashTimer!.isActive);
+
+    // 問題の残り時間の進捗率を計算
+    final double questionProgress = (_questionLimit > 0)
+      ? _questionCounter / _questionLimit
+      : 0.0;
+
+    String displayQuestion =_currentQuestion
+        .replaceAll('*', '×') // * を ×に変換
+        .replaceAll('/', '÷'); // / を ÷に変換
+
+
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.title} ($_currentLevel)'),
         backgroundColor: Colors.blue,
       ),
+      backgroundColor: _currentBackgroundColor,
       body: Center(
         child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // タイマー表示
-              Text(
-                '残り時間: $formattedTime 秒' ,
-                style: const TextStyle(fontSize: 24, color: Colors.red),
-              ),
-
-              const SizedBox(height: 40),
-
-              // 問題表示
-              Text(
-                _currentQuestion,
-                style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 30),
-
-              // 解答入力欄
-              SizedBox(
-                width: 200,
-                child: TextField(
-                  controller: _answerController,
-                  keyboardType: TextInputType.number,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 28),
-                  decoration: const InputDecoration(
-                    hintText: '答えを入力',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (_) => _checkAnswer(), // Enterキーでチェック
-                  enabled: !_isTaskFinished,
+          padding: const EdgeInsets.all(20.0),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // タイマー表示
+                Text(
+                  '残り時間: $formattedTime 秒' ,
+                  style: const TextStyle(fontSize: 24, color: Colors.red),
                 ),
-              ),
-              const SizedBox(height: 30),
 
-              // 回答ボタン
-              ElevatedButton(
-                onPressed: _checkAnswer, 
-                child: const Text('回答'),
-              ),
+                const SizedBox(height: 20),
 
-              const SizedBox(height: 40),
+                // 問題ごとの制限時間表示とグラフ
+                Text(
+                  '問題制限時間: $_questionLimit秒（残り: $_questionCounter秒）',
+                  style: const TextStyle(fontSize: 18, color: Colors.blue),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: 300,
+                  child: LinearProgressIndicator(
+                    value: questionProgress,
+                    backgroundColor: Colors.grey[300],
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      // 残り時間が少ないほど赤くする
+                      questionProgress > 0.5 ? Colors.green : (questionProgress > 0.2 ? Colors.orange : Colors.red)
+                    ),
+                    minHeight: 15,
+                  ),
+                ),
+                const SizedBox(height: 40),
+
+                // 問題表示
+                Text(
+                  displayQuestion,
+                  style: TextStyle(
+                    fontSize: 48, 
+                    fontWeight: FontWeight.bold,
+                    color: _questionColor,
+                  ),
+                ),
+                const SizedBox(height: 30),
+
+                // 解答入力欄
+                SizedBox(
+                  width: 200,
+                  child: TextField(
+                    controller: _answerController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: false, signed: true),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 28),
+                    decoration: const InputDecoration(
+                      hintText: '答えを入力',
+                      border: OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => _checkAnswer(), // Enterキーでチェック
+                    enabled: isInputEnabled,
+                  ),
+                ),
+                const SizedBox(height: 30),
+
+                // 回答ボタン
+                ElevatedButton(
+                  onPressed: isInputEnabled ? _checkAnswer : null, 
+                  child: const Text('回答'),
+                ),
+
+                const SizedBox(height: 40),
               
-              // 現在のスコア表示
-              Text(
-                '正答数: $_correctCount / 回答数: $_totalAnswered',
-                style: const TextStyle(fontSize: 20),
-              ),
-              Text(
-              '難易度： $_currentLevel',
-              style: const TextStyle(fontSize: 16, color: Colors.grey),
-              ),
-            ],
+                // 現在のスコア表示
+                Text(
+                  '正答数: $_correctCount / 回答数: $_totalAnswered',
+                  style: const TextStyle(fontSize: 20),
+                ),
+                Text(
+                '難易度： $_currentLevel',
+                style: const TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+              ],
+            )
           )
-        )
-      ),
+        ),
+      )
     );
   }
 }

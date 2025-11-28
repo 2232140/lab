@@ -4,26 +4,39 @@ import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:go_router/go_router.dart';
 
-final player = AudioPlayer();
 const audioPath = 'audio/Audio_test.mp3';
 
-class TestPage extends StatelessWidget {
+class TestPage extends StatefulWidget {
   const TestPage({super.key});
 
-  // 進むボタンを押した時
+  @override
+  State<TestPage> createState() => _TestPageState(); 
+}
+
+// ✨ 致命的バグ修正 2: インデントを削除して左端に配置
+class _TestPageState extends State<TestPage> { 
+  // 3. AudioPlayerをStateクラス内に移動
+  final player = AudioPlayer(); 
+
+  // 進むボタンを押した時 (WidgetからStateへアクセス)
   push(BuildContext context) {
-    // 呼吸法練習画面に進む
     context.push('/c');
   }
 
   // 戻るボタンを押した時
   back(BuildContext context) {
-    // 前の画面に戻る
     context.pop();
   }
 
   void _stopAudio() async {
     await player.stop();
+  }
+  
+  // 4. dispose()を追加して解放 (順序は完璧です)
+  @override
+  void dispose() {
+    player.dispose(); 
+    super.dispose();
   }
 
   @override
@@ -31,10 +44,14 @@ class TestPage extends StatelessWidget {
     // ボタン
     final button = ElevatedButton(
       // ボタンを押したら、音声を再生する
-      onPressed: () {
-        player.play(AssetSource(audioPath));
+      onPressed: () async { // ✨ 修正: asyncを追加
+        try {
+          await player.play(AssetSource(audioPath)); // ✨ 修正: try-catchで再生を保護
+        } catch (e) {
+          print('Audio playback error (safe): $e');
+        }
       },
-      child:Text('音声を再生する'),
+      child:const Text('音声を再生する'),
     );
 
     // 進むボタン
@@ -60,7 +77,7 @@ class TestPage extends StatelessWidget {
     // 音声停止ボタン
     final stopbutton = ElevatedButton(
       onPressed: _stopAudio,
-      child: Text('音声を停止する'),
+      child: const Text('音声を停止する'),
     );
 
     // ボタンを横に並べる
@@ -76,8 +93,8 @@ class TestPage extends StatelessWidget {
     final col = Column(
      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        Text(
-          '下のボタンを押し、音量の調節を行ってください。\n音声の再生が終わったら、次のページに進んでください。',
+        const Text(
+          '下のボタンを押し、音量の調節を行ってください。\\n音声の再生が終わったら、次のページに進んでください。',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 15,
@@ -85,15 +102,15 @@ class TestPage extends StatelessWidget {
         ),
         button,
         stopbutton,
-        Text('voice:VOICEVOX Nemo'),
+        const Text('voice:VOICEVOX Nemo'),
         row,
       ],
     );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('音声確認用ページ'),
         backgroundColor: Colors.blue,
+        title: const Text('音声テスト'),
       ),
       body: Center(
         child: col,
